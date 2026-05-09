@@ -148,18 +148,6 @@ bun run typecheck  # TypeScript type check
 
 This project is a fork of [claude-telegram-bot](https://github.com/linuz90/claude-telegram-bot) by [@linuz90](https://github.com/linuz90).
 
-**What changed:**
-- Integration with ORGANON (GRAFO v2, session sync, identity persistence)
-- Extended safety boundaries (path restrictions, destructive command blocking)
-- 17 commands (vs 8 original) — added `/title`, `/dir`, `/files`, `/git`, `/think`, `/stop`, and more
-- Session persistence (save/resume up to 20 sessions)
-- Multi-chat support (independent sessions per Telegram chat)
-- Full test coverage (624 tests, TDD approach)
-- Smart message splitting (HTML-safe, preserves formatting)
-- Enhanced security (user allowlist, rate limiting, audit logging)
-
-Original foundation by linuz90 — extended for EAR ecosystem integration.
-
 ## License
 
 MIT
