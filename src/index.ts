@@ -1,0 +1,195 @@
+/**
+ * Claude Telegram Bot - TypeScript/Bun Edition
+ *
+ * Control Claude Code from your phone via Telegram.
+ */
+
+import { Bot } from "grammy";
+import { run, sequentialize } from "@grammyjs/runner";
+import { TELEGRAM_TOKEN, WORKING_DIR, ALLOWED_USERS, RESTART_FILE } from "./config";
+import { unlinkSync, readFileSync, existsSync } from "fs";
+import {
+  handleStart,
+  handleNew,
+  handleStop,
+  handleStatus,
+  handleResume,
+  handleRestart,
+  handleRetry,
+  handleText,
+  handleVoice,
+  handlePhoto,
+  handleDocument,
+  handleCallback,
+  handleModel,
+  handleDir,
+  handleFiles,
+  handleGit,
+  handleThink,
+  handleCompact,
+  handleHistory,
+  handleChat,
+  handlePipeline,
+  handleTitle,
+} from "./handlers";
+
+// Create bot instance
+const bot = new Bot(TELEGRAM_TOKEN);
+
+// Sequentialize non-command messages per user (prevents race conditions)
+// Commands bypass sequentialization so they work immediately
+bot.use(
+  sequentialize((ctx) => {
+    // Commands are not sequentialized - they work immediately
+    if (ctx.message?.text?.startsWith("/")) {
+      return undefined;
+    }
+    // Messages with ! prefix bypass queue (interrupt)
+    if (ctx.message?.text?.startsWith("!")) {
+      return undefined;
+    }
+    // Callback queries (button clicks) are not sequentialized
+    if (ctx.callbackQuery) {
+      return undefined;
+    }
+    // Other messages are sequentialized per chat
+    return ctx.chat?.id.toString();
+  })
+);
+
+// ============== Command Handlers ==============
+
+bot.command("start", handleStart);
+bot.command("new", handleNew);
+bot.command("stop", handleStop);
+bot.command("status", handleStatus);
+bot.command("resume", handleResume);
+bot.command("restart", handleRestart);
+bot.command("retry", handleRetry);
+
+// ============== New Commands (v2) ==============
+
+bot.command("model", (ctx) => handleModel(ctx, ALLOWED_USERS));
+bot.command("dir", (ctx) => handleDir(ctx, ALLOWED_USERS));
+bot.command("files", (ctx) => handleFiles(ctx, ALLOWED_USERS));
+bot.command("git", (ctx) => handleGit(ctx, ALLOWED_USERS));
+bot.command("think", (ctx) => handleThink(ctx, ALLOWED_USERS));
+bot.command("compact", (ctx) => handleCompact(ctx, ALLOWED_USERS));
+bot.command("history", (ctx) => handleHistory(ctx, ALLOWED_USERS));
+bot.command("chat", (ctx) => handleChat(ctx, ALLOWED_USERS));
+bot.command("pipeline", (ctx) => handlePipeline(ctx, ALLOWED_USERS));
+bot.command("title", (ctx) => handleTitle(ctx, ALLOWED_USERS));
+
+// ============== Message Handlers ==============
+
+// Text messages
+bot.on("message:text", handleText);
+
+// Voice messages
+bot.on("message:voice", handleVoice);
+
+// Photo messages
+bot.on("message:photo", handlePhoto);
+
+// Document messages
+bot.on("message:document", handleDocument);
+
+// ============== Callback Queries ==============
+
+bot.on("callback_query:data", handleCallback);
+
+// ============== Error Handler ==============
+
+bot.catch((err) => {
+  console.error("Bot error:", err);
+});
+
+// ============== Startup ==============
+
+console.log("=".repeat(50));
+console.log("Claude Telegram Bot - TypeScript Edition");
+console.log("=".repeat(50));
+console.log(`Working directory: ${WORKING_DIR}`);
+console.log(`Allowed users: ${ALLOWED_USERS.length}`);
+console.log("Starting bot...");
+
+// Clean start: delete any webhook leftover
+await bot.api.raw.deleteWebhook({ drop_pending_updates: false });
+
+// Get bot info first
+const botInfo = await bot.api.getMe();
+console.log(`Bot started: @${botInfo.username}`);
+
+// Register commands with Telegram so they appear in the menu
+await bot.api.setMyCommands([
+  { command: "new", description: "Nuova sessione" },
+  { command: "stop", description: "Ferma query corrente" },
+  { command: "status", description: "Stato del bot" },
+  { command: "resume", description: "Riprendi sessione salvata" },
+  { command: "retry", description: "Riprova ultimo messaggio" },
+  { command: "model", description: "Cambia modello (opus/sonnet/haiku)" },
+  { command: "dir", description: "Cambia directory di lavoro" },
+  { command: "files", description: "Lista file nella directory" },
+  { command: "git", description: "Git status/log/diff" },
+  { command: "think", description: "Toggle modalità thinking" },
+  { command: "compact", description: "Compatta il contesto" },
+  { command: "history", description: "Cronologia messaggi" },
+  { command: "chat", description: "Gestisci multi-chat" },
+  { command: "pipeline", description: "Stato pipeline media" },
+  { command: "title", description: "Rinomina sessione corrente" },
+  { command: "restart", description: "Riavvia il bot" },
+]);
+console.log("Commands registered with Telegram");
+
+// Check for pending restart message to update
+if (existsSync(RESTART_FILE)) {
+  try {
+    const data = JSON.parse(readFileSync(RESTART_FILE, "utf-8"));
+    const age = Date.now() - data.timestamp;
+
+    // Only update if restart was recent (within 30 seconds)
+    if (age < 30000 && data.chat_id && data.message_id) {
+      await bot.api.editMessageText(
+        data.chat_id,
+        data.message_id,
+        "✅ Bot restarted"
+      );
+    }
+    unlinkSync(RESTART_FILE);
+  } catch (e) {
+    console.warn("Failed to update restart message:", e);
+    try { unlinkSync(RESTART_FILE); } catch {}
+  }
+}
+
+// Start with runner, but handle 409 gracefully
+const runner = run(bot, {
+  runner: {
+    retryInterval: 5000, // Wait 5s before retrying on error
+  },
+});
+
+// Handle runner errors without crashing
+runner.task()?.catch((err: Error) => {
+  console.error("Runner stopped with error:", err);
+});
+
+// Graceful shutdown
+const stopRunner = () => {
+  if (runner.isRunning()) {
+    console.log("Stopping bot...");
+    runner.stop();
+  }
+};
+
+process.on("SIGINT", () => {
+  console.log("Received SIGINT");
+  stopRunner();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  console.log("Received SIGTERM");
+  stopRunner();
+  process.exit(0);
+});
